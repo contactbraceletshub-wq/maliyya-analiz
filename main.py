@@ -3,79 +3,93 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="ProAnaliz Terminalı", layout="wide")
+st.set_page_config(page_title="Professional Analiz Terminalı", layout="wide")
 
 @st.cache_data(ttl=3600)
-def get_data(ticker):
+def get_data(ticker, interval_choice):
+    # Zaman diliminə görə data çəkmək
+    interval_map = {"Gündəlik": "1d", "Həftəlik": "1wk", "Aylıq": "1mo"}
     t = yf.Ticker(ticker)
-    return t.history(period="2y"), t.info
+    df = t.history(period="2y", interval=interval_map[interval_choice])
+    return df, t.info
 
-st.title("🎯 Peşəkar Analiz və Zaman Proqnozları")
+st.title("🎯 Peşəkar Maliyyə Analiz və Qiymət Proqnozu")
 
-# 1. Ticker və Zaman Seçimi
-col_input1, col_input2 = st.columns([1, 1])
+# 1. Giriş Parametrləri
+col_input1, col_input2, col_input3 = st.columns(3)
 with col_input1:
-    ticker_symbol = st.text_input("Ticker daxil edin (məs: AAPL):", "AAPL").upper()
+    ticker_symbol = st.text_input("Ticker daxil edin:", "AAPL").upper()
 with col_input2:
-    target_period = st.selectbox("Analiz və Proqnoz müddəti:", 
-                                 ["1 Həftəlik", "1 Aylıq", "3 Aylıq", "6 Aylıq", "1 İllik"])
+    chart_interval = st.selectbox("Şam Zaman Dilimi:", ["Gündəlik", "Həftəlik", "Aylıq"])
+with col_input3:
+    target_period = st.selectbox("Proqnoz Müddəti:", ["1 Həftəlik", "1 Aylıq", "3 Aylıq", "6 Aylıq", "1 İllik"])
 
 if ticker_symbol:
     try:
-        df, info = get_data(ticker_symbol)
-        
-        # Göstəricilərin hesablanması
+        df, info = get_data(ticker_symbol, chart_interval)
         current_price = df['Close'].iloc[-1]
+        
+        # Texniki Hesablamalar
         df['SMA_50'] = df['Close'].rolling(window=50).mean()
         df['SMA_200'] = df['Close'].rolling(window=200).mean()
-        
-        # RSI
-        delta = df['Close'].diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-        df['RSI'] = 100 - (100 / (1 + (gain/loss)))
-        rsi_now = df['RSI'].iloc[-1]
+        atr = (df['High'] - df['Low']).rolling(window=14).mean().iloc[-1] # Volatillik üçün
 
-        # 2. YAP-BOZ ANALİZİ (Məntiq mərkəzi)
-        st.markdown(f"### 🧩 {target_period} üçün Strateji Analiz")
+        # 2. Şirkət Sağlamlıq Analizi (İdeal Limitlərlə)
+        st.subheader("🏛️ Şirkət Sağlamlıq Analizi")
+        f1, f2, f3 = st.columns(3)
         
-        # Proqnoz Məntiqi (Trend + Fundamental + RSI kombinasiyası)
-        trend = "Müsbət" if current_price > df['SMA_50'].iloc[-1] else "Mənfi"
-        pe_val = info.get('trailingPE', 25)
+        pe = info.get('trailingPE', 0)
+        de = info.get('debtToEquity', 0)
+        fcf = info.get('freeCashflow', 0)
+
+        f1.metric("P/E Ratio", f"{pe:.2f}", help="İdeal: < 20-25")
+        st.caption(f"P/E: {pe:.2f} (İdeal: 15-25 arası)")
         
-        # Proqnoz Hesablanması (Simulyasiya edilmiş peşəkar rəy)
-        if trend == "Müsbət" and rsi_now < 70 and pe_val < 30:
-            outlook = "Yüksəliş ehtimalı yüksəkdir"
+        f2.metric("Borc/Kapital", f"{de:.2f}%", help="İdeal: < 100%")
+        st.caption(f"Borc/Kapital: {de:.2f} (İdeal: < 100)")
+        
+        f3.metric("Free Cash Flow", f"${fcf/1e9:.2f}B", help="İdeal: Müsbət və artan")
+        st.caption(f"FCF: Müsbət olması sağlamlıq əlamətidir")
+
+        # 3. Qiymət Proqnozu və Giriş/Çıxış (Alqoritmik Hesablama)
+        st.divider()
+        st.subheader(f"🧩 {target_period} üçün Proqnoz və Ticarət Planı")
+        
+        # Sadələşdirilmiş Proqnoz Alqoritmi
+        volatility_factor = {"1 Həftəlik": 1, "1 Aylıq": 2, "3 Aylıq": 4, "6 Aylıq": 6, "1 İllik": 10}[target_period]
+        expected_move = atr * volatility_factor
+        
+        # Trend analizi
+        is_uptrend = current_price > df['SMA_50'].iloc[-1]
+        
+        if is_uptrend:
+            pred_price = current_price + (expected_move * 0.5)
+            buy_zone = (current_price - (atr * 0.5), current_price)
+            sell_zone = (pred_price * 0.98, pred_price * 1.05)
             signal = "BUY (AL)"
             color = "green"
-        elif trend == "Mənfi" or rsi_now > 75:
-            outlook = "Düzəliş (Eniş) gözlənilir"
+        else:
+            pred_price = current_price - (expected_move * 0.3)
+            buy_zone = (pred_price * 0.95, pred_price)
+            sell_zone = (current_price, current_price + atr)
             signal = "SELL (SAT)"
             color = "red"
-        else:
-            outlook = "Stabil / Gözləmə mövqeyi"
-            signal = "HOLD (GÖZLƏ)"
-            color = "orange"
 
-        # 3. Nəticə Cədvəli
-        res1, res2, res3 = st.columns(3)
-        res1.metric("Cari Qiymət", f"${current_price:.2f}")
-        res2.metric("Trend İstiqaməti", trend)
-        res3.metric("RSI (Güc)", f"{rsi_now:.2f}")
+        p1, p2 = st.columns(2)
+        with p1:
+            st.info(f"**Təxmini Hədəf Qiymət:** ${pred_price:.2f}")
+            st.write(f"**Tövsiyə:** :{color}[{signal}]")
+        
+        with p2:
+            st.success(f"**Alış Aralığı (Entry):** ${buy_zone[0]:.2f} - ${buy_zone[1]:.2f}")
+            st.error(f"**Satış Aralığı (Target):** ${sell_zone[0]:.2f} - ${sell_zone[1]:.2f}")
 
-        st.info(f"**Yekun Proqnoz ({target_period}):** {outlook} | **Tövsiyə:** :{color}[{signal}]")
-
-        # 4. Fundamental Sağlamlıq bölməsi
-        with st.expander("Şirkətin Fundamental Sağlamlıq Analizi"):
-            st.write(f"**P/E Ratio:** {pe_val} (Sektor ortalaması ilə müqayisə edilməlidir)")
-            st.write(f"**Borc/Kapital:** {info.get('debtToEquity', 'N/A')}")
-            st.write(f"**Free Cash Flow:** {info.get('freeCashflow', 'N/A')}")
-
-        # 5. Qrafik
-        fig = go.Figure(data=[go.Candlestick(x=df.index[-100:], open=df['Open'][-100:], 
-                        high=df['High'][-100:], low=df['Low'][-100:], close=df['Close'][-100:])])
-        fig.update_layout(title=f"{ticker_symbol} Son 100 Şam", template="plotly_dark")
+        # 4. İnteraktiv Qrafik
+        fig = go.Figure(data=[go.Candlestick(x=df.index[-150:], open=df['Open'][-150:], 
+                        high=df['High'][-150:], low=df['Low'][-150:], close=df['Close'][-150:], name="Şamlar")])
+        fig.add_trace(go.Scatter(x=df.index[-150:], y=df['SMA_50'][-150:], name="SMA 50", line=dict(color='blue')))
+        fig.update_layout(template="plotly_dark", height=600, xaxis_rangeslider_visible=False)
         st.plotly_chart(fig, use_container_width=True)
 
     except Exception as e:
-        st.error(f"Xəta: {e}")
+        st.error(f"Xəta: {e}. Ticker-in düzgünlüyünü yoxlayın.")
