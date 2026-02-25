@@ -1,7 +1,6 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-from datetime import datetime, timedelta
 
 # Səhifə ayarları
 st.set_page_config(page_title="Peşəkar Maliyyə Analizi", layout="wide")
@@ -10,11 +9,10 @@ st.title("🎯 Peşəkar Maliyyə Analiz və Qiymət Proqnozu")
 
 # --- FUNKSİYALAR ---
 
-@st.cache_data(ttl=3600)  # Məlumatı 1 saat yaddaşda saxlayır (Limiti aşmamaq üçün)
+@st.cache_data(ttl=3600)  # Limiti aşmamaq üçün məlumatı 1 saat keşdə saxlayır
 def get_stock_data(ticker_symbol):
     try:
         stock = yf.Ticker(ticker_symbol)
-        # Son 1 illik məlumatı çəkirik
         df = stock.history(period="1y")
         
         if df.empty:
@@ -37,8 +35,7 @@ with col1:
     ticker = st.text_input("Şirkətin adını və ya Tickerini daxil edin (məs: AAPL, NVDA):", value="AAPL").upper()
 
 with col2:
-    period_options = {"1 Həftəlik": 7, "1 Aylıq": 30, "3 Aylıq": 90}
-    selection = st.selectbox("Proqnoz Müddəti:", list(period_options.keys()))
+    selection = st.selectbox("Proqnoz Müddəti:", ["1 Həftəlik", "1 Aylıq", "3 Aylıq"])
 
 if ticker:
     data, error = get_stock_data(ticker)
@@ -49,7 +46,7 @@ if ticker:
         df = data["df"]
         info = data["info"]
         
-        # Cari qiymət və dəyişim
+        # Cari qiymət hesabı
         current_price = df['Close'].iloc[-1]
         prev_price = df['Close'].iloc[-2]
         change = current_price - prev_price
@@ -62,16 +59,20 @@ if ticker:
         st.subheader("Qiymət Qrafiki (Son 1 İl)")
         st.line_chart(df['Close'])
 
-        # Analiz bölməsi (Warren Buffett tərzi sadə fundamentallar)
+        # Fundamental Göstəricilər
         st.subheader("📊 Fundamental Göstəricilər")
         f_col1, f_col2, f_col3 = st.columns(3)
         
+        # Dividend faizini düzgün formatda çıxarmaq üçün:
+        div_yield = info.get('dividendYield', 0)
+        if div_yield is None: div_yield = 0
+        
         with f_col1:
-            st.write(**P/E Ratio:** {info.get('trailingPE', 'N/A')})
+            st.write(f"**P/E Ratio:** {info.get('trailingPE', 'N/A')}")
         with f_col2:
-            st.write(**Market Cap:** {info.get('marketCap', 'N/A'):,})
+            m_cap = info.get('marketCap', 0)
+            st.write(f"**Market Cap:** {m_cap:,} USD")
         with f_col3:
-            st.write(**Dividend Yield:** {info.get('dividendYield', 0)*100:.22f}%)
-
+            st.write(f"**Dividend Yield:** {div_yield * 100:.2f}%")
 else:
     st.info("Analizə başlamaq üçün yuxarıya bir ticker daxil edin.")
